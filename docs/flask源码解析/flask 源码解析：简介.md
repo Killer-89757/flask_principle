@@ -1,0 +1,97 @@
+# flask 源码解析：简介
+
+这是 flask 源码解析系列文章的其中一篇，本系列所有文章列表：
+
+- [flask 源码解析：简介](./flask 源码解析：简介.md)
+- [flask 源码解析：应用启动流程](./flask 源码解析：应用启动流程.md)
+- [flask 源码解析：路由](./flask 源码解析：路由.md)
+- [flask 源码解析：上下文](./flask 源码解析：上下文.md)
+- [flask 源码解析：请求](./flask 源码解析：请求.md)
+- [flask 源码解析：响应](./flask 源码解析：响应.md)
+- [flask 源码解析：session](./flask 源码解析：session.md)
+
+## flask 简介
+
+Flask 官网上对它的定位是一个“微” python web 开发框架。
+
+> Flask is a micro web development framework for Python.
+
+python 语言 web 框架很多：Django、Tornado、webpy、bottle……，flask 的特点是**简单可扩展**。简单有几个方面，比如它只实现 web 框架最核心的功能，保持功能的简洁；还有一个就是代码量少，核心代码 `app.py` 文件只有 2k+ 行。可扩展就是允许[第三方插件](http://flask.pocoo.org/extensions/)来扩充功能，比如数据库可以使用 `Flask-SQLAlchemy`，缓存可以使用 `Flask-Cache` 等等。
+
+下面这段代码是 flask 官方文档给出的 hello world 版本的 flask 应用：
+
+```python
+from flask import Flask
+app = Flask(__name__)
+
+@app.route('/')
+def hello_world():
+    return 'Hello, World!'
+
+if __name__ == '__main__':
+    app.run()
+```
+
+要理解 flask 的源码，必须有一定的 python 基础（对 decorator、magic method、iterator、generator 概念比较熟悉），不然的话，会有些吃力。另外一个必须理解的概念是 [WSGI](https://www.python.org/dev/peps/pep-0333/)，简单来说就是一套 web server 和 web 框架/web 应用之间的协议。可以阅读我之前写的 [python wsgi 简介](https://cizixs.com/2014/11/08/understand-wsgi) 和翻译的 [什么是 web 框架](https://cizixs.com/2015/09/21/what-is-a-web-framework) ，或者自行搜索相关资料，熟悉这部分的内容。
+
+**NOTE**：本系列文章分析的 flask 版本号是 `0.12`，其他版本可能会有出入。
+
+## 两个依赖
+
+flask 有两个核心依赖库：`werkzeug` 和 `jinja`，而 `werkzeug` 又是两者中更核心的。
+
+`werkzeug` 负责核心的逻辑模块，比如路由、请求和应答的封装、WSGI 相关的函数等；`jinja` 负责模板的渲染，主要用来渲染返回给用户的 html 文件内容。
+
+模板（template）是和 web 框架相对独立的内容，比如 jinja 不是只能用在 web 应用中，而 web 应用也可以不处理模板（比如返回 raw text 或者 json/xml 结构数据，而不是 html 页面）。`flask` 直接使用 `jinja2` 而不是把这部分也做成可扩展的看起来有悖它的设计原则，我个人的理解是：flask 是个写网页的 web 框架，不像 `flask-restful` 可以专门做 `json/xml` 数据接口，必须提供模板功能，不然用户就无法使用。而如果不绑定一个模板库的话，有三种方法：自己写一个模板引擎、封装一个可扩展的模板层，用户可以自己选择具体的模板引擎、或者让用户自己处理模板。但是这些方法要么增加实现的复杂度，要么增加了使用的复杂度。
+
+### [werkzeug](http://werkzeug.pocoo.org/)
+
+`werkzeug` 的定位并不是一个 web 框架，而是 HTTP 和 WSGI 相关的工具集，可以用来编写 web 框架，也可以直接使用它提供的一些帮助函数。
+
+> Werkzeug is an HTTP and WSGI utility library for Python.
+
+`werkzeug` 提供了 python web WSGI 开发相关的功能：
+
+- 路由处理：怎么根据请求中的 url 找到它的处理函数
+- request 和 response 封装：可以更好地读取 request 的数据，也容易生成响应
+- 一个自带的 WSGI server，可以用来测试环境运行自己的应用
+
+比如，我们可以使用 `werkzeug` 编写一个简单的 hello world 的 WSGI app：
+
+```python
+from werkzeug.wrappers import Request, Response
+
+def application(environ, start_response):
+    request = Request(environ)
+    text = 'Hello %s!' % request.args.get('name', 'World')
+    response = Response(text, mimetype='text/plain')
+    return response(environ, start_response)
+```
+
+除了和 web WSGI 相关的功能，werkzeug 还实现了很多非常有用的数据结构和函数。比如用来处理一个 key 对应多个值的 `MultiDict`，不支持修改的字典 `ImmutableDict` ，可以缓存类属性的 `cache_property` 等等。如果有机会，可以写篇文章讲讲 `werkzeug` 的源码（好吧，我又挖坑了）。
+
+### [Jinja2](http://jinja.pocoo.org/docs/2.9/)
+
+官网上，对 `Jinja` 的 介绍已经很清晰，它就是一个 python 实现的模板引擎，功能非常丰富。
+
+> Jinja2 is a full featured template engine for Python. It has full unicode support, an optional integrated sandboxed execution environment, widely used and BSD licensed.
+
+`Jinja` 功能比较丰富，支持 unicode 解析、自动 HTML escape 防止 XSS 攻击、继承、变量、过滤器、流程逻辑支持、python 代码逻辑集成等等。具体的功能和使用请参考官网的文档，这里就不介绍了。
+
+## 如何读代码
+
+阅读源代码是件耗时而又没有直接产出的事情，所以必须要事先明确目的，不然会白白浪费时间。对于我来说，一般需要阅读源码有几个可能的原因：
+
+1. 在学习语言的时候遇到瓶颈，想借鉴和学习优秀项目的风格、思路、经验等。比如在刚学习一门语言的语法之后，会发现自己还是不能很好地使用它。这个时候，我一般会找一个项目来练手，然后阅读一些优秀项目的代码来参考它们的实现
+2. 工作中需要经常用到某个项目。比如你从事 web 开发， 经常使用 flask/Django 框架，熟悉它们的源码可以让你在使用的时候更能得心应手和有的放矢，而且遇到问题之后也能更容易去定位
+3. 自己想深入理解某个领域的知识。对某个领域非常感兴趣，想理解它的内部实现原理，或者干脆自己想造个轮子，那么阅读源码是很好的途径
+
+知道了自己要阅读代码，那么怎么去读代码呢？
+
+1. 最重要的是**不要畏惧！**记得我刚开始工作的时候，总觉得那些项目都是非常优秀的人编写的高质量代码，自己可望不可即，还没有深入之前就认为自己肯定看不懂，更不用去修改代码了。但其实，只要是人写的代码就会有 bug，也会有可以改进的地方，要有好的心态：欣赏好的代码设计，但也要学会识别不好的代码
+2. **不要巨细无遗**！阅读代码最怕的是在细节中纠缠不清，不仅拖慢进度也会大挫信心。**所有的代码大概都是树形的结构**，开始最重要的是理清树干的结构，知道这个树大概有几个部分，分别负责什么功能，它们之间的大概关系是啥就够了。万万不可取的是盯着某个小树叶研究半天，或者被藤蔓遮住了视线
+3. **带着问题去阅读！**这个建议不仅适用于代码，也适用于所有的阅读。如果在阅读之前有了明确的目的，比如想知道程序是怎么启动的、某个 bug 是什么时候引入的、某个功能是怎么实现的…… 带着这些问题，目的性强，理解也更快
+4. **简化再简化**！如果代码的量级比较大，要学会简化问题，找到代码的核心。有几种方法：忽略细节，比如你知道某个文件夹是不同的驱动，那么只要理解它们的接口和大致功能就行，把细节当做黑盒；运行最简单的代码，通过一个 hello world 或者 quickstart 提供的例子作为入口和理解单位；找到之前的版本，有了版本控制和网络，很多项目很容易找到历史版本，比如理解 linux 的话很多书会推荐 0.X 的版本，它的核心都在，理解也更方便
+5. **双管齐下！**理解一个很大项目无外乎两种方法——从上到下和从下到上。对于比较复杂的项目，灵活使用这两种方法，从上到下容易找到脉络，但有时候因为多态或者运行时加载的原因很难往下跟踪；从下到上掌握东西更牢固，更有针对性，但会看不清项目的全貌，不容理解整体。两种方法同时使用，直到它们出现交汇，做到融会贯通
+
+希望说了这么多，能对大家以后读代码和工作有点帮助。那么，从下一篇文章，我们就正式开始 flask 源码之旅了！
