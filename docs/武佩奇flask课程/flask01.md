@@ -23,8 +23,9 @@ flask框架本身没有太多的功能，路由/视图/模版(jinja2)/session/�
 
 安装
 
-```
-pip install flask
+```python
+# 和老师保持同一个版本，要不后面代码追踪有差异
+pip install flask==1.1.1
 ```
 
 flask本身是没有WSGI，是依赖于第三方的werkzeug实现的
@@ -354,6 +355,7 @@ html文件
 
 - flask的路由使用的就是装饰器‘
 - 路由参数 `路径参数`、`endpoint`、`methods`
+  
   - endpoint不能重名、**endpoint不写默认和handler同名**
 - 使用动态路由
 - 提交数据
