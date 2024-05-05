@@ -16,9 +16,8 @@ flask源码分析的目录：https://cizixs.com/2017/01/10/flask-insight-introdu
 ### 武佩奇flask源码课程 
 
 - 课程地址：https://www.bilibili.com/video/BV11Y411h71J
-
+- 代码位置：`code/flask01~code/flask05`
 - flask 版本：1.1.1
-
 - 课程笔记：
   - [flask的快速使用和蓝图](./docs/武佩奇flask课程/flask01.md)
   - [数据库链接池和上下文管理](./docs/武佩奇flask课程/flask02.md)
@@ -29,6 +28,8 @@ flask源码分析的目录：https://cizixs.com/2017/01/10/flask-insight-introdu
 ### flask使用教程
 
 教程主要包括以下几个方面
+
+代码位置：`code/FlaskTutorial`
 
 * [Flask教程(一)搭建开发环境](./docs/flask使用笔记/Flask教程(一)搭建开发环境.md)
 * [Flask教程(二)第一个Flask应用程序](./docs/flask使用笔记/Flask教程(二)第一个Flask应用程序.md)
