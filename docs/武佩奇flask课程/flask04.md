@@ -1,4 +1,4 @@
-# flask04
+# flask04(`重中之重`)
 
 1. wsgi
 
@@ -349,8 +349,6 @@ obj.pop()
     obj.pop()
 ```
 
-- [ ] TODO：在TOP中`return stack[-1]` 是如何从`__storage__`删除整个数据的
-
 7. flask源码中总共有2个localstack对象
 
 > 在最新的flask 3.0.3版本中这个部分不同，回退和老师相同版本 flask == 1.1.1
@@ -383,6 +381,8 @@ _app_ctx_stack.push('killer')
 ![image-20240504205501257](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240504205501257-4b01dd.png)
 
 ### 7.源码初识
+
+![twisted](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Ftwisted-1629d2.png)
 
 #### 7.1 项目启动
 
@@ -451,6 +451,37 @@ _app_ctx_stack.push('killer')
 
   ![image-20240504211346069](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240504211346069-e5edcf.png)
 
+- 准备before_request、after_request、before_first_request函数
+
+  ```python
+  """
+  {
+    None:[f1,f2,f3]
+  }
+  """
+  self.before_request_funcs = {}
+  self.after_request_funcs = {}
+  self.before_first_request_funcs = []
+  
+  @setupmethod
+  def before_request(self, f):
+      # 就是收集函数
+      self.before_request_funcs.setdefault(None, []).append(f)
+      return f
+  
+  @setupmethod
+  def after_request(self, f):
+  	# 同上
+      self.after_request_funcs.setdefault(None, []).append(f)
+      return f
+  
+  @setupmethod
+  def before_first_request(self, f):
+      # 同上
+      self.before_first_request_funcs.append(f)
+      return f
+  ```
+
 - 添加路由映射
 
   ```python
@@ -511,6 +542,368 @@ _app_ctx_stack.push('killer')
           app.run()
   ```
 
+#### 7.2 有用户请求到来
+
+```python
+# 有请求过来的话，直接调用__call__方法
+def __call__(self, environ, start_response):
+    return self.wsgi_app(environ, start_response)
+
+# 核心代码
+def wsgi_app(self, environ, start_response):
+    ctx = self.request_context(environ)
+    error = None
+    try:
+        try:
+            ctx.push()
+            response = self.full_dispatch_request()
+        except Exception as e:
+            error = e
+            response = self.handle_exception(e)
+        except:  # noqa: B001
+            error = sys.exc_info()[1]
+            raise
+        return response(environ, start_response)
+    finally:
+        if self.should_ignore_error(error):
+            error = None
+            ctx.auto_pop(error)
+```
+
+> 用户请求进来发生了什么？
+>
+> - environ：请求携带的信息-----> 封装成Request对象、创建session数据 ----> 绑定到一起封装成 RequestContext对象 (LocalStack)
+>
+> ```python
+> # environ的详细值 携带的就是请求信息
+> {'wsgi.version': (1, 0), 'wsgi.url_scheme': 'http', 'wsgi.input': <_io.BufferedReader name=1020>, 'wsgi.errors': <_io.TextIOWrapper name='<stderr>' mode='w' encoding='utf-8'>, 'wsgi.multithread': True, 'wsgi.multiprocess': False, 'wsgi.run_once': False, 'werkzeug.server.shutdown': <function WSGIRequestHandler.make_environ.<locals>.shutdown_server at 0x00000286D6DE1670>, 'SERVER_SOFTWARE': 'Werkzeug/0.16.1', 'REQUEST_METHOD': 'GET', 'SCRIPT_NAME': '', 'PATH_INFO': '/login', 'QUERY_STRING': '', 'REQUEST_URI': '/login', 'RAW_URI': '/login', 'REMOTE_ADDR': '127.0.0.1', 'REMOTE_PORT': 12551, 'SERVER_NAME': '127.0.0.1', 'SERVER_PORT': '5000', 'SERVER_PROTOCOL': 'HTTP/1.1', 'HTTP_HOST': '127.0.0.1:5000', 'HTTP_CONNECTION': 'keep-alive', 'HTTP_SEC_CH_UA': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"', 'HTTP_SEC_CH_UA_MOBILE': '?0', 'HTTP_SEC_CH_UA_PLATFORM': '"Windows"', 'HTTP_UPGRADE_INSECURE_REQUESTS': '1', 'HTTP_USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'HTTP_SEC_PURPOSE': 'prefetch;prerender', 'HTTP_PURPOSE': 'prefetch', 'HTTP_ACCEPT': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7', 'HTTP_SEC_FETCH_SITE': 'none', 'HTTP_SEC_FETCH_MODE': 'navigate', 'HTTP_SEC_FETCH_USER': '?1', 'HTTP_SEC_FETCH_DEST': 'document', 'HTTP_ACCEPT_ENCODING': 'gzip, deflate, br, zstd', 'HTTP_ACCEPT_LANGUAGE': 'zh-CN,zh;q=0.9', 'HTTP_COOKIE': 'SL_G_WPT_TO=eo; SL_GWPT_Show_Hide_tmp=1; SL_wptGlobTipTmp=1', 'werkzeug.request': <Request 'http://127.0.0.1:5000/login' [GET]>}
+> ```
+>
+> - 获取app对象，创建g数据 ---->绑定到一起封装成 AppContext对象 (LocalStack)
+> - 从RequestContext对象中的Request对象的url信息，在Map对象中找到endpoint，在view_functions中找到view
+> - 执行before_request函数
+> - 执行view函数
+> - 执行after_request函数
+> - 销毁ctx和app_ctx
+
+1. 创建ctx = RequestContext对象，其内部封装了 Request对象和session数据。
+
+```python
+# ctx核心代码
+class RequestContext():
+    def __init__(self, app, environ, request=None, session=None):
+        self.app = app
+        if request is None:
+            # 构建Request对象将environ进行封装
+            request = app.request_class(environ)
+        self.request = request
+        self.url_adapter = None
+        try:
+            self.url_adapter = app.create_url_adapter(self.request)
+        except HTTPException as e:
+            self.request.routing_exception = e
+        self.flashes = None
+        # 创建session
+        self.session = session
+```
+
+
+
+![image-20240504235219692](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240504235219692-e8b47f.png)
+
+最终我们看各种请求数据的调用方法：
+
+![image-20240504235656928](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240504235656928-86f69b.png) 
+
+```python
+# ctx.push方法
+    def push(self):
+        # 第一次进来不用管
+        top = _request_ctx_stack.top
+        if top is not None and top.preserved:
+            top.pop(top._preserved_exc)
+
+        app_ctx = _app_ctx_stack.top
+        if app_ctx is None or app_ctx.app != self.app:
+            # app_ctx不存在，创建app_ctx
+            app_ctx = self.app.app_context()
+            # 将app_ctx放入到AppLocal中
+            app_ctx.push()
+            self._implicit_app_ctx_stack.append(app_ctx)
+        else:
+            self._implicit_app_ctx_stack.append(None)
+
+        if hasattr(sys, "exc_clear"):
+            sys.exc_clear()
+
+        # 将 ctx 放入到 RequestLocal中
+        _request_ctx_stack.push(self)
+
+        if self.session is None:
+            session_interface = self.app.session_interface
+            self.session = session_interface.open_session(self.app, self.request)
+
+            if self.session is None:
+                self.session = session_interface.make_null_session(self.app)
+
+        if self.url_adapter is not None:
+            self.match_request()
+```
+
+![image-20240505001449654](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505001449654-231d0a.png)
+
+![image-20240505001712503](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505001712503-06a9f1.png)
+
+2. 创建app_ctx = AppContext对象，其内部封装了App和g。 
+
+![image-20240505000926160](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505000926160-7b429d.png)
+
+![image-20240505001319779](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505001319779-5b7b07.png)
+
+- 然后ctx.push触发将 ctx 和 app_ctx 分别通过自己的LocalStack对象将其放入到Local中，Local的本质是以线程ID为key，以{“stack”:[]}为value的字典。
+
+  ```
+  {
+  	1111:{“stack”:[ctx,]}
+  }
+  
+  {
+  	1111:{“stack”:[app_ctx,]}
+  }
+  ```
+
+  注意：以后再想要获取 request/session / app / g时，都需要去local中获取。 
+
+- 通过url_path从Map中找出Rule规则
+
+![image-20240505002935285](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505002935285-a76927.png)
+
+![image-20240505002304698](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505002304698-bd7119.png)
+
+```python
+# 下面代码的控制核心
+    def full_dispatch_request(self):
+        # 尝试触发before_first_request
+        self.try_trigger_before_first_request_functions()
+        try:
+            # 信号(钩子，可以在触发式设置操作)
+            request_started.send(self)
+            # 执行before_request
+            rv = self.preprocess_request()
+            if rv is None:
+                # 执行视图函数
+                rv = self.dispatch_request()
+        except Exception as e:
+            rv = self.handle_user_exception(e)
+        # 将得到的结果序列化返回，得到Response对象
+        return self.finalize_request(rv)
+```
+
+为什么before_first_request只执行一次？
+
+![image-20240505014813623](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505014813623-28d79d.png)
+
+- 函数执行流程
+
+![image-20240505013536261](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505013536261-7f2f67.png)
+
+- 执行所有的before_request函数
+  - 这个地方使用chain的原因是：蓝图中不仅有蓝图的before_request要执行，全局的before_request也要执行，所以需要将两个列表进行合二为一，得到一个迭代器对象，方便遍历执行
+
+![image-20240505015757301](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505015757301-b15010.png)
+
+- 执行视图函数
+- 执行所有after_request函数（session加密放到cookie中）
+
+![image-20240505014116043](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505014116043-b21f68.png)
+
+response的诞生
+
+![image-20240505012616352](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505012616352-56ce83.png)
+
+销毁ctx和app_ctx
+
+![image-20240505022829927](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505022829927-8f66e9.png)
+
+和带返回值的wsgi进行类比
+
+![image-20240505023818098](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505023818098-7384e5.png)
+
+### 8.了解源码流程之后，使用：session、request、app、g
+
+- 偏函数
+
+  ```python
+  import functools
+  
+  # 偏函数
+  def func(a1,a2):
+      print(a1,a2)
+  
+  # 使用partial进行绑定参数形成新函数，之后的函数都可以一个参数调用
+  # 适合一个参数固定的那种情况
+  new_func = functools.partial(func,123)
+  new_func(2)
+  ```
+
+- 在flask中使用偏函数
+
+  ```python
+  def _lookup_req_object(name):
+      # ctx
+      top = _request_ctx_stack.top
+      if top is None:
+          raise RuntimeError(_request_ctx_err_msg)
+      # ctx.request
+      # ctx.session
+      return getattr(top, name)
+  
+  
+  new_func1 = functools.partial(_lookup_req_object, "request")
+  v = new_func1() # request
+  
+  new_func2 = functools.partial(_lookup_req_object, "session")
+  y = new_func2() # session
+  ```
+
+  ![image-20240505105006613](https://cdn.jsdelivr.net/gh/Killer-89757/PicBed/images/2024%2F05%2Fimage-20240505105006613-b37440.png)
+
+  ```python
+  # 这个类的本质就是session/request的代理(处理request和session)
+  class LocalProxy(object):
+      def __init__(self, xxx):
+          self.xxx = xxx()  # ctx.session   / ctx.reqeust
+  
+      def __setitem__(self, key, value):
+          self.xxx[key] = value  # ctx.session[key] = value
+  
+      def __getitem__(self, item):
+          return self.xxx[item]  # ctx.session[item]
+  
+      def __getattr__(self, item):
+          return getattr(self.xxx, item)  # ctx.request.method
+  
+  
+  def func():
+      return ctx.session
+  
+  
+  x1 = LocalProxy(func)
+  # 执行__setitem__
+  x1['k1'] = 123
+  # 执行__getitem__
+  x1['k8']
+  
+  
+  def function():
+      return ctx.request
+  
+  
+  x2 = LocalProxy(function)
+  # 执行__getattr__方法
+  print(x2.method)
+  ```
+
+- 私有成员
+
+  ```python
+  class Foo:
+      def __init__(self):
+          self.name = 'alex'
+          self.__age = 123
+  
+  
+  obj = Foo()
+  
+  print(obj.name)
+  # 不符合开发规范，但是确实可以用
+  print(obj._Foo__age)
+  ```
+
+- LocalProxy的源码
+
+  ```python
+  import functools
+  class LocalProxy(object):
+      def __init__(self, local):
+          object.__setattr__(self, "_LocalProxy__local", local) # self.__local = local
+  
+      def _get_current_object(self):
+          return self.__local() # self._LocalProxy__local()
+  
+      def __setitem__(self, key, value):
+          # ctx.session[key] = value
+          self._get_current_object()[key] = value
+  
+      def __getattr__(self, name):
+          # ctx.request.method
+          return getattr(self._get_current_object(), name)
+  
+  def _lookup_req_object(name):
+      top = _request_ctx_stack.top
+      if top is None:
+          raise RuntimeError(_request_ctx_err_msg)
+      return getattr(top, name)
+  
+  
+  session = LocalProxy(functools.partial(_lookup_req_object, "session")) # 函数()  自动传入session
+  session['k1'] = 123
+  
+  
+  request = LocalProxy(functools.partial(_lookup_req_object, "request")) # 函数() 自动传入request
+  request.method
+  ```
+
+  ```python
+  # session, request, current_app, g 全部都是LocalProxy对象。
+  """
+  session['x'] = 123     ctx.session['x'] = 123
+  request.method         ctx.request.method
+  current_app.config    app_ctx.app.config
+  g.x1                  app_ctx.g.x1
+  """
+  ```
+
+### 9.g到底是个什么鬼？
+
+```
+在一次请求请求的周期，可以在g中设置值，在本次的请求周期中都可以读取或复制。
+相当于是一次请求周期的全局变量。 
+```
+
+```python
+from flask import Flask,g
+
+app = Flask(__name__,static_url_path='/xx')
+
+@app.before_request
+def f1():
+    g.x1 = 123
+
+@app.after_request
+def f1(response):
+    print(g.x1)
+    return response
+
+# 只要before_request之前创建的g对象，然后after_request之后的auto_pop中销毁的，之间的所有过程中都可以使用
+
+@app.route('/index')
+def index():
+    print(g.x1)
+    return 'hello world'
+
+
+if __name__ == '__main__':
+    app.run()
+```
+
+## 总结
+
+- 第一阶段：启动flask程序，加载特殊装饰器、路由，把他们封装  app= Flask对象中。 
+- 第二阶段：请求到来
+  - 创建上下文对象：应用上下文、请求上下文。
+  - 执行before / 视图 / after 
+  - 销毁上下文对象 
 
 ## 扩展
 
@@ -703,3 +1096,4 @@ SQLhelper
   with SqlHelper() as cursor:
       cursor.execute('select 1')
   ```
+
