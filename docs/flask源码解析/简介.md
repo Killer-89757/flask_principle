@@ -2,6 +2,8 @@
 
 这是 flask 源码解析系列文章的其中一篇，本系列所有文章列表：
 
+- [flask 源码解析：python_wsgi_简介](./python_wsgi_简介.md)
+
 - [flask 源码解析：简介](./简介.md)
 - [flask 源码解析：应用启动流程](./应用启动流程.md)
 - [flask 源码解析：路由](./路由.md)
